@@ -82,6 +82,16 @@ case you need scrolling resolution of a pixel, set to 1.  After a
 pixel scroll, typing \\[next-line] or \\[previous-line] scrolls the window to make it
 fully visible, and undoes the effect of the pixel-level scroll.")
 
+(defvar pixel-dead-time 0.1
+  "Interval that requires for the next smooth scrolling in seconds.
+When there is a scrolling request within this period, the
+scrolling will be carried out without pixel resolution.  If zero,
+scrolling is with pixel resolution always.")
+
+(defvar pixel-last-scroll-time 0
+  "Time when the last scrolling was made in seconds since the epoch.")
+
+
 ;;;###autoload
 (define-minor-mode pixel-scroll-mode
   "A minor mode to scroll text pixel-by-pixel.
@@ -104,45 +114,50 @@ if ARG is omitted or nil."
 This is an alternative of `scroll-up'.  Scope moves downward."
   (interactive)
   (or arg (setq arg 1))
-  (dotimes (ii arg) ; move scope downward
-    (let ((amt (if pixel-resolution-fine-flag
-                   (if (integerp pixel-resolution-fine-flag)
-                       pixel-resolution-fine-flag
-                     (frame-char-height))
-                 (pixel-line-height))))
-      (if (pixel-eob-at-top-p)            ; when end-of-the-buffer is close
-          (scroll-up 1)                   ; relay on robust method
-        (while (pixel-point-at-top-p amt) ; prevent too late (multi tries)
-          (vertical-motion 1))            ; move point downward
-        (pixel-scroll-pixel-up amt)))))   ; move scope downward
+  (if (pixel-scroll-in-rush-p)
+      (scroll-up arg)
+    (dotimes (ii arg)                    ; move scope downward
+      (let ((amt (if pixel-resolution-fine-flag
+                     (if (integerp pixel-resolution-fine-flag)
+                         pixel-resolution-fine-flag
+                       (frame-char-height))
+                   (pixel-line-height))))
+        (if (pixel-eob-at-top-p)      ; when end-of-the-buffer is close
+            (scroll-up 1)             ; relay on robust method
+          (while (pixel-point-at-top-p amt) ; prevent too late (multi tries)
+            (vertical-motion 1))            ; move point downward
+          (pixel-scroll-pixel-up amt))))))  ; move scope downward
 
 (defun pixel-scroll-down (&optional arg)
   "Scroll text of selected window down ARG lines.
 This is and alternative of `scroll-down'.  Scope moves upward."
   (interactive)
   (or arg (setq arg 1))
-  (dotimes (ii arg)
-    (let ((amt (if pixel-resolution-fine-flag
-                   (if (integerp pixel-resolution-fine-flag)
-                       pixel-resolution-fine-flag
-                     (frame-char-height))
-                 (pixel-line-height -1))))
-      (while (pixel-point-at-bottom-p amt) ; prevent too late (multi tries)
-        (vertical-motion -1))              ; move point upward
-      (if (or (pixel-bob-at-top-p amt)     ; when beginning-of-the-buffer is seen
-              (pixel-eob-at-top-p))        ; for file with a long line
-          (scroll-down 1)                  ; relay on robust method
-        (pixel-scroll-pixel-down amt)))))
+  (if (pixel-scroll-in-rush-p)
+      (scroll-down arg)
+    (dotimes (ii arg)
+      (let ((amt (if pixel-resolution-fine-flag
+                     (if (integerp pixel-resolution-fine-flag)
+                         pixel-resolution-fine-flag
+                       (frame-char-height))
+                   (pixel-line-height -1))))
+        (while (pixel-point-at-bottom-p amt) ; prevent too late (multi tries)
+          (vertical-motion -1))              ; move point upward
+        (if (or (pixel-bob-at-top-p amt) ; when beginning-of-the-buffer is seen
+                (pixel-eob-at-top-p))    ; for file with a long line
+            (scroll-down 1)              ; relay on robust method
+          (pixel-scroll-pixel-down amt))))))
 
-(defun pixel-bob-at-top-p (amt)
-  "Return non-nil if window-start is at beginning of the current buffer.
-Window must be vertically scrolled by not more than AMT pixels."
-  (and (equal (window-start) (point-min))
-       (< (window-vscroll nil t) amt)))
-
-(defun pixel-eob-at-top-p ()
-  "Return non-nil if end of buffer is at top of window."
-  (<= (count-lines (window-start) (window-end)) 2)) ; count-screen-lines
+(defun pixel-scroll-in-rush-p ()
+  "Return if scroll is in rush.
+WHen request is delivered soon after the previous one, user is in
+hurry.  It is not ready for another smooth scroll."
+  (let* ((current-time (float-time))
+         (scroll-in-rush-p (< (- current-time pixel-last-scroll-time)
+                              pixel-dead-time)))
+    (setq pixel-last-scroll-time current-time)
+    ;; (message (if scroll-in-rush-p "normal-scroll" "pixel-scroll"))
+    scroll-in-rush-p))
 
 (defun pixel-posn-y-at-point ()
   "Return y coordinates of point in pixels of current window.
